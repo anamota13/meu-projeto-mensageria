@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "amqplib": "^2.0.1",
+    "dotenv": "^17.4.2"
+  }
+}
