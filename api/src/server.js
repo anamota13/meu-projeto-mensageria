@@ -5,140 +5,147 @@ require('dotenv').config();
 const app = express();
 app.use(express.json());
 
+// Conexão com o PostgreSQL rodando no Docker (Porta 5433)
 const pool = new Pool({
   host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 5432,
+  port: process.env.DB_PORT || 5433,
   user: process.env.DB_USER || 'postgres',
   password: process.env.DB_PASSWORD || 'postgres',
   database: process.env.DB_NAME || 'marketplace',
 });
 
-// Função auxiliar para montar a estrutura completa do payload do pedido
-async function buildOrderPayload(orderRow) {
-  const customer = await pool.query('SELECT * FROM cliente WHERE id = $1', [orderRow.id_cliente]);
-  const seller = await pool.query('SELECT * FROM seller WHERE id = $1', [orderRow.id_seller]);
-  const shipment = await pool.query('SELECT * FROM envio WHERE id_pedido = $1', [orderRow.uuid]);
-  const payment = await pool.query('SELECT * FROM pagamento WHERE id_pedido = $1', [orderRow.uuid]);
+// Função Utilitária: Formata o Pedido e realiza o CÁLCULO DINÂMICO dos Totais
+function formatOrderResponse(orderRow, itemsRows, shipmentRow, paymentRow) {
+  let orderTotal = 0;
 
-  const itemsQuery = await pool.query(
-    `SELECT ip.*, p.titulo, p.id_categoria, c.nome as cat_nome, c.id_subcategoria 
-     FROM item_pedido ip
-     JOIN produto p ON ip.id_produto = p.id
-     LEFT JOIN categoria c ON p.id_categoria = c.id
-     WHERE ip.id_pedido = $1`,
-    [orderRow.uuid]
-  );
-
-  let totalPedido = 0;
-  const itemsFormatted = itemsQuery.rows.map(item => {
-    const itemTotal = Number(item.preco_unitario) * Number(item.quantidade);
-    totalPedido += itemTotal;
+  const items = itemsRows.map((item) => {
+    const unitPrice = parseFloat(item.preco_unitario);
+    const quantity = parseInt(item.quantidade, 10);
+    const itemTotal = unitPrice * quantity; // Cálculo dinâmico do item
+    orderTotal += itemTotal; // Soma dinamicamente para o total do pedido
 
     return {
-      id: item.id,
+      id: item.id_item,
       product: {
         id: item.id_produto,
-        title: item.titulo,
-        'unit price': Number(item.preco_unitario)
+        title: item.titulo_produto,
+        'unit price': unitPrice,
+        quantity: quantity,
+        category: {
+          id: item.id_categoria,
+          name: item.nome_categoria,
+          'sub category': item.id_subcategoria ? {
+            id: item.id_subcategoria,
+            name: item.nome_subcategoria
+          } : null
+        }
       },
-      quantity: item.quantidade,
-      category: {
-        id: item.id_categoria,
-        name: item.cat_nome,
-        'sub category': item.id_subcategoria ? { id: item.id_subcategoria, name: '' } : null
-      },
-      total: itemTotal
+      total: itemTotal // Valor calculado do item
     };
   });
-
-  const ship = shipment.rows[0];
-  const pay = payment.rows[0];
-  const cust = customer.rows[0];
-  const sel = seller.rows[0];
 
   return {
     uuid: orderRow.uuid,
     'created at': orderRow.data_criacao,
     channel: orderRow.canal,
-    total: totalPedido,
+    total: orderTotal, // Valor total do pedido calculado dinamicamente
     status: orderRow.status,
-    customer: cust ? { id: cust.id, name: cust.nome, email: cust.email, document: cust.documento } : null,
-    seller: sel ? { id: sel.id, name: sel.nome, city: sel.cidade, state: sel.estado } : null,
-    items: itemsFormatted,
-    shipment: ship ? { carrier: ship.transportadora, service: ship.servico, status: ship.status, tracking_code: ship.codigo_rastreio } : null,
-    payment: pay ? { method: pay.metodo, status: pay.status, 'transaction id': pay.id_transacao } : null
+    customer: {
+      id: orderRow.id_cliente,
+      name: orderRow.nome_cliente,
+      email: orderRow.email_cliente,
+      document: orderRow.documento_cliente
+    },
+    seller: {
+      id: orderRow.id_seller,
+      name: orderRow.nome_seller,
+      city: orderRow.cidade_seller,
+      state: orderRow.estado_seller
+    },
+    items: items,
+    shipment: shipmentRow ? {
+      carrier: shipmentRow.transportadora,
+      service: shipmentRow.servico,
+      status: shipmentRow.status,
+      tracking_code: shipmentRow.codigo_rastreio
+    } : null,
+    payment: paymentRow ? {
+      method: paymentRow.metodo,
+      status: paymentRow.status,
+      'transaction id': paymentRow.id_transacao
+    } : null
   };
 }
 
-// 1. GET /orders (Com filtros, paginação e ordenação por data)
+// ==========================================
+// ROTAS DA API
+// ==========================================
+
+// 1. GET /orders - Listagem com Paginação e Filtros
 app.get('/orders', async (req, res) => {
   try {
-    const { customer_id, product_id, status, seller_id, page = 1, limit = 10 } = req.query;
+    const { page = 1, limit = 10, customer_id, product_id, status, seller_id } = req.query;
     const offset = (page - 1) * limit;
 
-    let query = `SELECT DISTINCT p.* FROM pedido p 
-                 LEFT JOIN item_pedido ip ON p.uuid = ip.id_pedido 
-                 WHERE 1=1`;
+    let query = `
+      SELECT p.uuid, p.data_criacao, p.canal, p.status, 
+             c.id as id_cliente, c.nome as nome_cliente, c.email as email_cliente, c.documento as documento_cliente,
+             s.id as id_seller, s.nome as nome_seller, s.cidade as cidade_seller, s.estado as estado_seller
+      FROM pedido p
+      JOIN cliente c ON p.id_cliente = c.id
+      JOIN seller s ON p.id_seller = s.id
+      WHERE 1=1
+    `;
     const params = [];
 
     if (customer_id) {
       params.push(customer_id);
       query += ` AND p.id_cliente = $${params.length}`;
     }
-    if (seller_id) {
-      params.push(seller_id);
-      query += ` AND p.id_seller = $${params.length}`;
-    }
     if (status) {
       params.push(status);
       query += ` AND p.status = $${params.length}`;
     }
+    if (seller_id) {
+      params.push(seller_id);
+      query += ` AND p.id_seller = $${params.length}`;
+    }
     if (product_id) {
       params.push(product_id);
-      query += ` AND ip.id_produto = $${params.length}`;
+      query += ` AND p.uuid IN (SELECT id_pedido FROM item_pedido WHERE id_produto = $${params.length})`;
     }
 
     query += ` ORDER BY p.data_criacao DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
     params.push(limit, offset);
 
     const ordersResult = await pool.query(query, params);
-    const responsePayloads = await Promise.all(ordersResult.rows.map(row => buildOrderPayload(row)));
+    const response = [];
 
-    res.json(responsePayloads);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+    for (const order of ordersResult.rows) {
+      const itemsResult = await pool.query(`
+        SELECT ip.id as id_item, ip.id_produto, pr.titulo as titulo_produto, ip.preco_unitario, ip.quantidade,
+               cat.id as id_categoria, cat.nome as nome_categoria, sub.id as id_subcategoria, sub.nome as nome_subcategoria
+        FROM item_pedido ip
+        JOIN produto pr ON ip.id_produto = pr.id
+        LEFT JOIN categoria cat ON pr.id_categoria = cat.id
+        LEFT JOIN categoria sub ON cat.id_subcategoria = sub.id
+        WHERE ip.id_pedido = $1
+      `, [order.uuid]);
 
-// 2. GET /orders/{uuid}
-app.get('/orders/:uuid', async (req, res) => {
-  try {
-    const orderResult = await pool.query('SELECT * FROM pedido WHERE uuid = $1', [req.params.uuid]);
-    if (orderResult.rows.length === 0) {
-      return res.status(404).json({ message: 'Pedido não encontrado' });
+      const shipmentResult = await pool.query('SELECT * FROM envio WHERE id_pedido = $1', [order.uuid]);
+      const paymentResult = await pool.query('SELECT * FROM pagamento WHERE id_pedido = $1', [order.uuid]);
+
+      response.push(formatOrderResponse(order, itemsResult.rows, shipmentResult.rows[0], paymentResult.rows[0]));
     }
-    const payload = await buildOrderPayload(orderResult.rows[0]);
-    res.json(payload);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+
+    res.json(response);
+  } catch (error) {
+    console.error('Erro em GET /orders:', error);
+    res.status(500).json({ error: 'Erro interno no servidor' });
   }
 });
 
-// 3. GET /orders/{uuid}/items (Retorna apenas a estrutura de items do pedido)
-app.get('/orders/:uuid/items', async (req, res) => {
-  try {
-    const orderResult = await pool.query('SELECT * FROM pedido WHERE uuid = $1', [req.params.uuid]);
-    if (orderResult.rows.length === 0) {
-      return res.status(404).json({ message: 'Pedido não encontrado' });
-    }
-    const payload = await buildOrderPayload(orderResult.rows[0]);
-    res.json({ items: payload.items });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// 4. GET /orders/financial-summary
+// 2. GET /orders/financial-summary - Resumo Financeiro (Declarar ANTES de /orders/:uuid)
 app.get('/orders/financial-summary', async (req, res) => {
   try {
     const { seller_id, start_date, end_date } = req.query;
@@ -155,56 +162,157 @@ app.get('/orders/financial-summary', async (req, res) => {
       whereClause += ` AND p.data_criacao BETWEEN $${params.length - 1} AND $${params.length}`;
     }
 
-    const totalOrdersRes = await pool.query(`SELECT COUNT(*) FROM pedido p ${whereClause}`, params);
-    const totalOrders = parseInt(totalOrdersRes.rows[0].count);
-
-    const revenueRes = await pool.query(
-      `SELECT SUM(ip.quantidade * ip.preco_unitario) as revenue 
-       FROM pedido p 
-       JOIN item_pedido ip ON p.uuid = ip.id_pedido 
-       ${whereClause}`,
-      params
-    );
-    const totalRevenue = parseFloat(revenueRes.rows[0].revenue || 0);
+    // Faturamento Total e Total de Pedidos
+    const totalsQuery = `
+      SELECT COUNT(DISTINCT p.uuid) as total_orders, 
+             COALESCE(SUM(ip.quantidade * ip.preco_unitario), 0) as total_revenue
+      FROM pedido p
+      JOIN item_pedido ip ON p.uuid = ip.id_pedido
+      ${whereClause}
+    `;
+    const totalsResult = await pool.query(totalsQuery, params);
+    const totalOrders = parseInt(totalsResult.rows[0].total_orders, 10);
+    const totalRevenue = parseFloat(totalsResult.rows[0].total_revenue);
     const averageOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
 
-    const statusRes = await pool.query(
-      `SELECT status, COUNT(*) as count FROM pedido p ${whereClause} GROUP BY status`,
-      params
-    );
-    const byStatus = {};
-    statusRes.rows.forEach(r => { byStatus[r.status] = parseInt(r.count); });
+    // Agrupamento por Status
+    const statusQuery = `
+      SELECT p.status, COUNT(p.uuid) as count
+      FROM pedido p
+      ${whereClause}
+      GROUP BY p.status
+    `;
+    const statusResult = await pool.query(statusQuery, params);
+    const byStatus = { pending: 0, approved: 0, shipped: 0, delivered: 0, canceled: 0 };
+    statusResult.rows.forEach(row => {
+      byStatus[row.status] = parseInt(row.count, 10);
+    });
 
-    const paymentRes = await pool.query(
-      `SELECT pay.metodo, COUNT(p.uuid) as count, SUM(ip.quantidade * ip.preco_unitario) as total
-       FROM pedido p
-       JOIN pagamento pay ON p.uuid = pay.id_pedido
-       JOIN item_pedido ip ON p.uuid = ip.id_pedido
-       ${whereClause}
-       GROUP BY pay.metodo`,
-      params
-    );
-    const byPaymentMethod = {};
-    paymentRes.rows.forEach(r => {
-      byPaymentMethod[r.metodo] = {
-        count: parseInt(r.count),
-        total: parseFloat(r.total || 0)
-      };
+    // Agrupamento por Método de Pagamento
+    const paymentQuery = `
+      SELECT pg.metodo, COUNT(DISTINCT p.uuid) as count, SUM(ip.quantidade * ip.preco_unitario) as total
+      FROM pedido p
+      JOIN pagamento pg ON p.uuid = pg.id_pedido
+      JOIN item_pedido ip ON p.uuid = ip.id_pedido
+      ${whereClause}
+      GROUP BY pg.metodo
+    `;
+    const paymentResult = await pool.query(paymentQuery, params);
+    const byPaymentMethod = {
+      pix: { count: 0, total: 0 },
+      'credit card': { count: 0, total: 0 },
+      boleto: { count: 0, total: 0 }
+    };
+    paymentResult.rows.forEach(row => {
+      if (byPaymentMethod[row.metodo]) {
+        byPaymentMethod[row.metodo] = {
+          count: parseInt(row.count, 10),
+          total: parseFloat(row.total)
+        };
+      }
     });
 
     res.json({
-      "total orders": totalOrders,
-      "total revenue": totalRevenue,
-      "average order value": averageOrderValue,
-      "by_status": byStatus,
-      "by_payment_method": byPaymentMethod
+      'total orders': totalOrders,
+      'total revenue': totalRevenue,
+      'average order value': averageOrderValue,
+      by_status: byStatus,
+      by_payment_method: byPaymentMethod
     });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+  } catch (error) {
+    console.error('Erro em GET /orders/financial-summary:', error);
+    res.status(500).json({ error: 'Erro interno no servidor' });
+  }
+});
+
+// 3. GET /orders/:uuid - Detalhes do Pedido por UUID
+app.get('/orders/:uuid', async (req, res) => {
+  try {
+    const { uuid } = req.params;
+
+    const orderQuery = `
+      SELECT p.uuid, p.data_criacao, p.canal, p.status, 
+             c.id as id_cliente, c.nome as nome_cliente, c.email as email_cliente, c.documento as documento_cliente,
+             s.id as id_seller, s.nome as nome_seller, s.cidade as cidade_seller, s.estado as estado_seller
+      FROM pedido p
+      JOIN cliente c ON p.id_cliente = c.id
+      JOIN seller s ON p.id_seller = s.id
+      WHERE p.uuid = $1
+    `;
+    const orderResult = await pool.query(orderQuery, [uuid]);
+
+    if (orderResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Pedido não encontrado' });
+    }
+
+    const order = orderResult.rows[0];
+
+    const itemsResult = await pool.query(`
+      SELECT ip.id as id_item, ip.id_produto, pr.titulo as titulo_produto, ip.preco_unitario, ip.quantidade,
+             cat.id as id_categoria, cat.nome as nome_categoria, sub.id as id_subcategoria, sub.nome as nome_subcategoria
+      FROM item_pedido ip
+      JOIN produto pr ON ip.id_produto = pr.id
+      LEFT JOIN categoria cat ON pr.id_categoria = cat.id
+      LEFT JOIN categoria sub ON cat.id_subcategoria = sub.id
+      WHERE ip.id_pedido = $1
+    `, [uuid]);
+
+    const shipmentResult = await pool.query('SELECT * FROM envio WHERE id_pedido = $1', [uuid]);
+    const paymentResult = await pool.query('SELECT * FROM pagamento WHERE id_pedido = $1', [uuid]);
+
+    res.json(formatOrderResponse(order, itemsResult.rows, shipmentResult.rows[0], paymentResult.rows[0]));
+  } catch (error) {
+    console.error('Erro em GET /orders/:uuid:', error);
+    res.status(500).json({ error: 'Erro interno no servidor' });
+  }
+});
+
+// 4. GET /orders/:uuid/items - Retorna apenas a estrutura de itens
+app.get('/orders/:uuid/items', async (req, res) => {
+  try {
+    const { uuid } = req.params;
+
+    const itemsResult = await pool.query(`
+      SELECT ip.id as id_item, ip.id_produto, pr.titulo as titulo_produto, ip.preco_unitario, ip.quantidade,
+             cat.id as id_categoria, cat.nome as nome_categoria, sub.id as id_subcategoria, sub.nome as nome_subcategoria
+      FROM item_pedido ip
+      JOIN produto pr ON ip.id_produto = pr.id
+      LEFT JOIN categoria cat ON pr.id_categoria = cat.id
+      LEFT JOIN categoria sub ON cat.id_subcategoria = sub.id
+      WHERE ip.id_pedido = $1
+    `, [uuid]);
+
+    const items = itemsResult.rows.map((item) => {
+      const unitPrice = parseFloat(item.preco_unitario);
+      const quantity = parseInt(item.quantidade, 10);
+      return {
+        id: item.id_item,
+        product: {
+          id: item.id_produto,
+          title: item.titulo_produto,
+          'unit price': unitPrice,
+          quantity: quantity,
+          category: {
+            id: item.id_categoria,
+            name: item.nome_categoria,
+            'sub category': item.id_subcategoria ? {
+              id: item.id_subcategoria,
+              name: item.nome_subcategoria
+            } : null
+          }
+        },
+        total: unitPrice * quantity
+      };
+    });
+
+    res.json({ items });
+  } catch (error) {
+    console.error('Erro em GET /orders/:uuid/items:', error);
+    res.status(500).json({ error: 'Erro interno no servidor' });
   }
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`API rodando na porta ${PORT}`);
+  console.log(`API RESTful rodando com sucesso na porta ${PORT}`);
 });
