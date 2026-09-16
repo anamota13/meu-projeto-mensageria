@@ -5,6 +5,7 @@
 .env.production.local
 *.pem
 *.key
+*.json
 
 *.log
 npm-debug.log*

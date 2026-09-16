@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS seller (
 CREATE TABLE IF NOT EXISTS categoria (
     id VARCHAR(50) PRIMARY KEY,
     nome VARCHAR(100) NOT NULL,
-    id_subcategoria VARCHAR(50)
+    id_subcategoria VARCHAR(50) REFERENCES categoria(id)
 );
 
 CREATE TABLE IF NOT EXISTS produto (
