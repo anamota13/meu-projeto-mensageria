@@ -1,14 +1,26 @@
-### 1. Listar Pedidos (Com paginação e filtros)
+### 1. Listar pedidos
+GET http://localhost:3000/orders
+
+### 2. Listar pedidos com paginação
 GET http://localhost:3000/orders?page=1&limit=5
 
-### 2. Listar Pedidos Filtrados por Status
-GET http://localhost:3000/orders?status=approved
+### 3. Filtrar por status
+GET http://localhost:3000/orders?status=shipped
 
-### 3. Resumo Financeiro Consolidado
+### 4. Filtrar por cliente
+GET http://localhost:3000/orders?customer_id=1036
+
+### 5. Filtrar por vendedor
+GET http://localhost:3000/orders?seller_id=106
+
+### 6. Filtrar por produto
+GET http://localhost:3000/orders?product_id=ELEC-008
+
+### 7. Resumo financeiro
 GET http://localhost:3000/orders/financial-summary
 
-### 4. Buscar Pedido por UUID Especifico
-GET http://localhost:3000/orders/ORD-2025-0001
+### 8. Buscar Pedido Específico por UUID
+GET http://localhost:3000/orders/dd0ef623-f6e7-4f59-aeaa-ee0563d808cf
 
-### 5. Buscar Apenas os Itens de um Pedido por UUID
-GET http://localhost:3000/orders/ORD-2025-0001/items
+### 9. Buscar Apenas os Itens de um Pedido
+GET http://localhost:3000/orders/dd0ef623-f6e7-4f59-aeaa-ee0563d808cf/items
