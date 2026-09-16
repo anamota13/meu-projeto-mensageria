@@ -2,7 +2,6 @@ const { PubSub } = require('@google-cloud/pubsub');
 const { Client } = require('pg');
 require('dotenv').config();
 
-// Configuração de conexão do PostgreSQL
 const dbConfig = {
   host: process.env.DB_HOST || 'localhost',
   port: process.env.DB_PORT || 5433,
@@ -11,7 +10,6 @@ const dbConfig = {
   database: process.env.DB_NAME || 'marketplace',
 };
 
-// Configuração da credencial GCP Pub/Sub do professor
 const pubsub = new PubSub({
   keyFilename: './sa-grupo-e-key.json',
   projectId: 'serjava-demo',
@@ -24,7 +22,7 @@ async function runConsumer() {
 
   try {
     await db.connect();
-    console.log('[*] Conectado ao banco de dados PostgreSQL.');
+    console.log('[*] Conectado ao PostgreSQL.');
     console.log('[*] Aguardando mensagens no Google Pub/Sub...');
 
     subscription.on('message', async (msg) => {
@@ -86,7 +84,7 @@ async function runConsumer() {
           );
         }
 
-        // D. Pedido (com data de indexação da mensageria)
+        // D. Pedido (com data de indexação)
         const now = new Date();
         const createdAt = payload['created at'] || payload.created_at;
 
@@ -149,21 +147,17 @@ async function runConsumer() {
 
         await db.query('COMMIT');
         console.log(`[✓] Pedido ${payload.uuid} persistido com sucesso.`);
-        msg.ack(); // Confirma o recebimento no GCP Pub/Sub
+        msg.ack();
 
       } catch (error) {
         await db.query('ROLLBACK');
-        console.error(`[✗] Erro ao processar pedido ${payload ? payload.uuid : ''}:`, error);
-        msg.nack(); // Devolve para a fila do Pub/Sub
+        console.error(`[✗] Erro ao processar pedido:`, error);
+        msg.nack();
       }
     });
 
-    subscription.on('error', (err) => {
-      console.error('Erro na subscrição Pub/Sub:', err);
-    });
-
   } catch (error) {
-    console.error('Erro ao conectar no PostgreSQL:', error);
+    console.error('Erro no consumidor:', error);
   }
 }
 

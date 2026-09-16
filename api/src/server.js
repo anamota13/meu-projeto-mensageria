@@ -14,7 +14,7 @@ const pool = new Pool({
   database: process.env.DB_NAME || 'marketplace',
 });
 
-// Função Utilitária: Formata o Pedido e realiza o CÁLCULO DINÂMICO dos Totais
+// Função Utilitária: Formata a resposta e realiza o CÁLCULO DINÂMICO
 function formatOrderResponse(orderRow, itemsRows, shipmentRow, paymentRow) {
   let orderTotal = 0;
 
@@ -76,10 +76,6 @@ function formatOrderResponse(orderRow, itemsRows, shipmentRow, paymentRow) {
     } : null
   };
 }
-
-// ==========================================
-// ROTAS DA API
-// ==========================================
 
 // 1. GET /orders - Listagem com Paginação e Filtros
 app.get('/orders', async (req, res) => {
@@ -145,7 +141,7 @@ app.get('/orders', async (req, res) => {
   }
 });
 
-// 2. GET /orders/financial-summary - Resumo Financeiro (Declarar ANTES de /orders/:uuid)
+// 2. GET /orders/financial-summary - Resumo Financeiro
 app.get('/orders/financial-summary', async (req, res) => {
   try {
     const { seller_id, start_date, end_date } = req.query;
@@ -162,7 +158,6 @@ app.get('/orders/financial-summary', async (req, res) => {
       whereClause += ` AND p.data_criacao BETWEEN $${params.length - 1} AND $${params.length}`;
     }
 
-    // Faturamento Total e Total de Pedidos
     const totalsQuery = `
       SELECT COUNT(DISTINCT p.uuid) as total_orders, 
              COALESCE(SUM(ip.quantidade * ip.preco_unitario), 0) as total_revenue
@@ -175,7 +170,6 @@ app.get('/orders/financial-summary', async (req, res) => {
     const totalRevenue = parseFloat(totalsResult.rows[0].total_revenue);
     const averageOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
 
-    // Agrupamento por Status
     const statusQuery = `
       SELECT p.status, COUNT(p.uuid) as count
       FROM pedido p
@@ -188,7 +182,6 @@ app.get('/orders/financial-summary', async (req, res) => {
       byStatus[row.status] = parseInt(row.count, 10);
     });
 
-    // Agrupamento por Método de Pagamento
     const paymentQuery = `
       SELECT pg.metodo, COUNT(DISTINCT p.uuid) as count, SUM(ip.quantidade * ip.preco_unitario) as total
       FROM pedido p
@@ -314,5 +307,5 @@ app.get('/orders/:uuid/items', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`API RESTful rodando com sucesso na porta ${PORT}`);
+  console.log(`API RESTful rodando na porta ${PORT}`);
 });

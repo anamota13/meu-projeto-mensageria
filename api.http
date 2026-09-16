@@ -1,0 +1,14 @@
+### 1. Listar Pedidos (Com paginação e filtros)
+GET http://localhost:3000/orders?page=1&limit=5
+
+### 2. Listar Pedidos Filtrados por Status
+GET http://localhost:3000/orders?status=approved
+
+### 3. Resumo Financeiro Consolidado
+GET http://localhost:3000/orders/financial-summary
+
+### 4. Buscar Pedido por UUID Especifico
+GET http://localhost:3000/orders/ORD-2025-0001
+
+### 5. Buscar Apenas os Itens de um Pedido por UUID
+GET http://localhost:3000/orders/ORD-2025-0001/items
