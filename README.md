@@ -144,3 +144,7 @@ Retorna apenas a estrutura e o cálculo dos itens do pedido.
 O diagrama de entidade e relacionamento (DER), com o mapeamento das 8 tabelas e chaves estrangeiras, pode ser encontrado em:
 
 `database/der-diagram.png`
+
+##  Vídeo da apresentação
+
+[▶️  Assistir à demonstração da API de Pedidos](https://youtu.be/HxAhJkKv5ow)
